@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promethyx-auth"
+version = "0.1.0"
+description = "Shared PromethyX SSO — Supabase JWT verification + Flask guards. The ONE source of truth every tool installs instead of copy-pasting promethyx_auth.py."
+requires-python = ">=3.9"
+dependencies = [
+    "PyJWT[crypto]>=2.8",
+    "Flask>=3.0",
+]
+
+# Single top-level module. Bump `version` on any change and tag it; tools pin the
+# tag, so an auth fix rolls out by bumping the pin — not by editing N copies.
+[tool.setuptools]
+py-modules = ["promethyx_auth"]
