@@ -175,8 +175,30 @@ function mountAnnouncement() {
     } else {
       msg.textContent = data.message;
     }
-    x.onclick = () => { bar.hidden = true; if (data.id) setCookie(ANN_DISMISS_COOKIE, String(data.id)); };
+    // Make room for the bar so the host page's own top chrome doesn't slide
+    // under it (the bar is sticky at top:0, and tools have their own sticky/
+    // fixed headers). Expose the bar height as --pxann-h, push any sticky/fixed
+    // top header below it, and shrink full-viewport (inner-scroll) shells to fit.
+    function layout() {
+      const h = bar.hidden ? 0 : bar.offsetHeight;
+      document.documentElement.style.setProperty('--pxann-h', h + 'px');
+      document.querySelectorAll('.topbar, header').forEach((el) => {
+        const pos = getComputedStyle(el).position;
+        if (pos === 'sticky' || pos === 'fixed') el.style.top = 'var(--pxann-h, 0px)';
+      });
+      if (getComputedStyle(document.body).overflowY === 'hidden') {
+        const app = document.querySelector('.app');                 // inner-scroll shell
+        if (app) app.style.height = 'calc(100dvh - var(--pxann-h, 0px))';
+      }
+    }
+    x.onclick = () => {
+      bar.hidden = true;
+      document.documentElement.style.setProperty('--pxann-h', '0px');
+      if (data.id) setCookie(ANN_DISMISS_COOKIE, String(data.id));
+    };
     bar.hidden = false;
+    layout();
+    window.addEventListener('resize', layout);
   }).catch(() => {});
 }
 
