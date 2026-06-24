@@ -110,3 +110,74 @@ const PromethyxAuth = {
 };
 
 window.PromethyxAuth = PromethyxAuth;
+
+// ============================================================================
+// Platform-wide announcement bar.
+//
+// One announcement, edited in Admin (admin_settings.announcement), shown sticky
+// at the top of every tool that loads this file. Reads public.get_announcement()
+// — the RPC returns the row ONLY when enabled, so toggling it off in Admin hides
+// the bar everywhere with no redeploy. Dismissal is platform-wide: the dismissed
+// id is stored in a cookie on `.promethyx.com` (reusing setCookie above), so an ×
+// on any subdomain hides it on all; a new admin save mints a new id → re-shows.
+// Self-contained (injects its own CSS + DOM); fails silent when signed out.
+// ============================================================================
+const ANN_DISMISS_COOKIE = 'promethyx-ann-dismissed';
+
+function mountAnnouncement() {
+  if (window.__pxAnnMounted) return;             // once per page
+  if (!document.body) {                           // body not parsed yet — wait
+    document.addEventListener('DOMContentLoaded', mountAnnouncement, { once: true });
+    return;
+  }
+  window.__pxAnnMounted = true;
+
+  const style = document.createElement('style');
+  style.textContent =
+    '.pxann{position:sticky;top:0;z-index:99999;background:#EE7A3A;color:#1B1F2A;' +
+    'font-family:inherit;animation:pxann-in .4s cubic-bezier(.2,.7,.1,1) both}' +
+    '@keyframes pxann-in{from{transform:translateY(-100%)}to{transform:translateY(0)}}' +
+    '.pxann-inner{max-width:1280px;margin:0 auto;display:flex;align-items:center;' +
+    'gap:14px;padding:9px clamp(16px,4vw,56px)}' +
+    '.pxann-msg{flex:1;min-width:0;font-size:13.5px;font-weight:500;line-height:1.45;letter-spacing:.01em}' +
+    '.pxann-msg a{color:#1B1F2A;text-decoration:underline;text-underline-offset:2px}' +
+    '.pxann-x{flex:0 0 auto;width:28px;height:28px;padding:0;display:grid;place-items:center;' +
+    'color:#1B1F2A;background:rgba(27,31,42,.12);border:none;border-radius:8px;cursor:pointer;transition:background .15s}' +
+    '.pxann-x:hover{background:rgba(27,31,42,.22)}' +
+    '.pxann-x svg{width:14px;height:14px;display:block}';
+  document.head.appendChild(style);
+
+  const bar = document.createElement('div');
+  bar.className = 'pxann'; bar.setAttribute('role', 'status'); bar.hidden = true;
+  const inner = document.createElement('div'); inner.className = 'pxann-inner';
+  const msg = document.createElement('span'); msg.className = 'pxann-msg';
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'pxann-x'; x.setAttribute('aria-label', 'Dismiss announcement');
+  x.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ' +
+    'stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  inner.append(msg, x); bar.append(inner);
+  document.body.insertBefore(bar, document.body.firstChild);
+
+  // Only fetch once the session is loaded — the RPC is authenticated-only, so a
+  // signed-out page (which requireAuth will bounce anyway) simply shows no bar.
+  PromethyxAuth.getSession().then((session) => {
+    if (!session) return null;
+    return client.rpc('get_announcement');
+  }).then((res) => {
+    if (!res) return;
+    const { data, error } = res;
+    if (error || !data || !data.message) return;                 // none / disabled
+    if (data.id && getCookie(ANN_DISMISS_COOKIE) === String(data.id)) return;  // dismissed
+    if (data.link) {
+      const a = document.createElement('a');
+      a.href = data.link; a.target = '_blank'; a.rel = 'noopener'; a.textContent = data.message;
+      msg.appendChild(a);
+    } else {
+      msg.textContent = data.message;
+    }
+    x.onclick = () => { bar.hidden = true; if (data.id) setCookie(ANN_DISMISS_COOKIE, String(data.id)); };
+    bar.hidden = false;
+  }).catch(() => {});
+}
+
+mountAnnouncement();
