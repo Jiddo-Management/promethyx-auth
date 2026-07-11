@@ -25,6 +25,7 @@ Env reading is lazy (at call time, not import) so the module imports cleanly eve
 where SUPABASE_URL isn't in the environment.
 """
 import base64
+import ipaddress
 import json
 import os
 import re
@@ -126,6 +127,36 @@ def extract_token(cookies, authorization=None, *, cookie_name="promethyx-auth", 
     return None
 
 
+# ── Network-bound re-auth (pure) ─────────────────────────────────────────────
+# A session clears 2FA on one network; using it from a DIFFERENT one (laptop moved
+# to new wifi/cellular/VPN) should force a re-verify. The hub captures the network
+# at code-clear time into the `net` JWT claim; tools compare it to the live request
+# here. Coarse on purpose — a /24 (v4) or /48 (v6) prefix + country — so an IP
+# rotating WITHIN the same network doesn't nag, but a real move does.
+def network_signature(ip, country=None):
+    """Coarse network fingerprint 'PREFIX|COUNTRY', or None if `ip` is unusable."""
+    if not ip:
+        return None
+    try:
+        addr = ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return None
+    net = ipaddress.ip_network(f"{addr}/{24 if addr.version == 4 else 48}", strict=False)
+    return f"{net.network_address}/{net.prefixlen}|{(country or '').strip().upper()}"
+
+
+def network_ok(claims, *, ip, country=None):
+    """True unless the session is bound to a network that differs from this request's.
+    FAIL-OPEN when undeterminable — no `net` claim (old tokens / rollout / Hermes-PWA
+    sessions) or no usable client ip → allowed, so we never lock someone out on a
+    missing signal. Only an explicit, mismatching `net` claim returns False."""
+    bound = (claims or {}).get("net")
+    if not bound:
+        return True
+    live = network_signature(ip, country)
+    return True if not live else live == bound
+
+
 # ── Env-configured Flask adapter ─────────────────────────────────────────────
 def _supabase_url():
     url = os.environ.get("SUPABASE_URL")
@@ -175,9 +206,26 @@ def require_auth(view):
         # mfa_ok claim is allowed (older tokens / rollout safety); only explicit False
         # blocks — the user clears it once, at the dashboard login.
         if (current_user() or {}).get("mfa_ok") is False:
-            return jsonify(error="two-factor verification required", mfa_required=True), 401
+            return _reauth("two-factor verification required")
+        # Network-bound re-auth: a session that cleared 2FA on one network must
+        # re-verify when used from a different one. Enforced only when the token
+        # carries a `net` claim (Hermes-PWA sessions omit it; absent/old claims fail
+        # open — no stranding). Client IP is Cloudflare's CF-Connecting-IP.
+        if not network_ok(current_user() or {},
+                          ip=request.headers.get("CF-Connecting-IP"),
+                          country=request.headers.get("CF-IPCountry")):
+            return _reauth("network changed — please verify again")
         return view(*args, **kwargs)
     return wrapper
+
+
+def _reauth(message):
+    """401 that asks the client to re-authenticate. The `X-Promethyx-Reauth` header
+    lets the shared auth.js fetch-interceptor bounce to the hub login on ANY request
+    (not just the page-load gate) — used for both the 2FA and network-change cases."""
+    resp = jsonify(error=message, mfa_required=True)
+    resp.headers["X-Promethyx-Reauth"] = "1"
+    return resp, 401
 
 
 def require_app_role(app_slug, *roles):

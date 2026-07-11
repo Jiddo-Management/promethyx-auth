@@ -111,6 +111,27 @@ const PromethyxAuth = {
 
 window.PromethyxAuth = PromethyxAuth;
 
+// --- Global re-auth interceptor --------------------------------------------
+// Any response that comes back 401 with the `X-Promethyx-Reauth` header (the
+// backend needs 2FA, or the session's network changed mid-use) bounces to the hub
+// login instead of leaving the user on a dead page. Guards: fire once, and never on
+// the hub itself (LOGIN_URL's origin) so it can't loop with the login screen.
+(function () {
+  const nativeFetch = window.fetch.bind(window);
+  let redirecting = false;
+  window.fetch = async function (...args) {
+    const resp = await nativeFetch(...args);
+    try {
+      if (resp.status === 401 && resp.headers.get('X-Promethyx-Reauth') && !redirecting
+          && location.origin !== new URL(LOGIN_URL).origin) {
+        redirecting = true;
+        window.location.href = `${LOGIN_URL}?redirect=${encodeURIComponent(window.location.href)}`;
+      }
+    } catch (_) { /* an interceptor must never break the underlying request */ }
+    return resp;
+  };
+})();
+
 // ============================================================================
 // Platform-wide announcement bar.
 //
