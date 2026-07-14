@@ -112,10 +112,13 @@ const PromethyxAuth = {
 window.PromethyxAuth = PromethyxAuth;
 
 // --- Global re-auth interceptor --------------------------------------------
-// Any response that comes back 401 with the `X-Promethyx-Reauth` header (the
-// backend needs 2FA, or the session's network changed mid-use) bounces to the hub
-// login instead of leaving the user on a dead page. Guards: fire once, and never on
-// the hub itself (LOGIN_URL's origin) so it can't loop with the login screen.
+// Any response that comes back 401 with the `X-Promethyx-Reauth` header (backend
+// needs 2FA, the session's network changed mid-use, or the session died — logged
+// out elsewhere / token revoked / nightly wipe) bounces to the hub login instead
+// of leaving the user on a dead page. Guards: fire once, never on the hub itself
+// (LOGIN_URL's origin) so it can't loop with the login screen, and never when the
+// tool opted into its own in-app login (`window.PROMETHYX_IN_APP_LOGIN`, set before
+// this script loads) — the sanctioned SSO exception (Hermes) handles its own 401s.
 (function () {
   const nativeFetch = window.fetch.bind(window);
   let redirecting = false;
@@ -123,6 +126,7 @@ window.PromethyxAuth = PromethyxAuth;
     const resp = await nativeFetch(...args);
     try {
       if (resp.status === 401 && resp.headers.get('X-Promethyx-Reauth') && !redirecting
+          && !window.PROMETHYX_IN_APP_LOGIN
           && location.origin !== new URL(LOGIN_URL).origin) {
         redirecting = true;
         window.location.href = `${LOGIN_URL}?redirect=${encodeURIComponent(window.location.href)}`;

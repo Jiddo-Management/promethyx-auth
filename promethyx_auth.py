@@ -193,11 +193,11 @@ def require_auth(view):
     def wrapper(*args, **kwargs):
         token = _extract_token()
         if not token:
-            return jsonify(error="not authenticated"), 401
+            return _unauth("not authenticated")
         try:
             g.promethyx_user = verify_token(token)
         except Exception:
-            return jsonify(error="invalid token"), 401
+            return _unauth("invalid token")
         # A suspended user's refreshed token carries user_status='suspended' and no
         # grants (see custom_access_token_hook) — reject at the door.
         if (current_user() or {}).get("user_status") == "suspended":
@@ -224,6 +224,17 @@ def _reauth(message):
     lets the shared auth.js fetch-interceptor bounce to the hub login on ANY request
     (not just the page-load gate) — used for both the 2FA and network-change cases."""
     resp = jsonify(error=message, mfa_required=True)
+    resp.headers["X-Promethyx-Reauth"] = "1"
+    return resp, 401
+
+
+def _unauth(message):
+    """401 for a missing/invalid session (logged out elsewhere, token expired or
+    revoked, nightly wipe). Carries `X-Promethyx-Reauth` so the shared auth.js
+    interceptor bounces to the hub login on ANY request — not just the page-load
+    gate. Without the header, a session that dies mid-use leaves the user stranded
+    on a raw "not authenticated" error instead of the login screen."""
+    resp = jsonify(error=message)
     resp.headers["X-Promethyx-Reauth"] = "1"
     return resp, 401
 
